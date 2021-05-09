@@ -2,43 +2,59 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { gql } from '@apollo/client';
 import { graphql } from '@apollo/client/react/hoc';
+import { Edit } from '@styled-icons/material/Edit';
 import { get, omit, update } from 'lodash';
 import memoizeOne from 'memoize-one';
-import { defineMessages, FormattedMessage, injectIntl } from 'react-intl';
+import { defineMessages, FormattedDate, FormattedMessage, injectIntl } from 'react-intl';
 import styled from 'styled-components';
 
-import { CollectiveType } from '../../../lib/constants/collectives';
 import roles from '../../../lib/constants/roles';
 import { getErrorFromGraphqlException } from '../../../lib/errors';
 import formatMemberRole from '../../../lib/i18n/member-role';
 import { compose } from '../../../lib/utils';
 
-import CollectivePickerAsync from '../../CollectivePickerAsync';
+import Avatar from '../../Avatar';
 import Container from '../../Container';
-import { Box, Flex } from '../../Grid';
-import InputField from '../../InputField';
+import { Box, Flex, Grid } from '../../Grid';
 import Link from '../../Link';
 import Loading from '../../Loading';
-import MemberRoleDescription, { hasRoleDescription } from '../../MemberRoleDescription';
 import MessageBox from '../../MessageBox';
 import StyledButton from '../../StyledButton';
+import StyledRoundButton from '../../StyledRoundButton';
 import StyledTag from '../../StyledTag';
 import StyledTooltip from '../../StyledTooltip';
+import { P } from '../../Text';
 import { withUser } from '../../UserProvider';
 import WarnIfUnsavedChanges from '../../WarnIfUnsavedChanges';
 import SettingsTitle from '../SettingsTitle';
 
-/**
- * This pages sets some global styles that are causing troubles in new components. This
- * wrapper resets the global styles for children.
- */
-const ResetGlobalStyles = styled.div`
-  input {
-    width: 100%;
-  }
+import EditMemberModal from './EditMemberModal';
+import InviteMemberModal from './InviteMemberModal';
+
+const MemberContainer = styled(Container)`
+  position: relative;
+  display: block;
+  height: 100%;
+  min-height: 232px;
+  background: white;
+  width: 170px;
+  border-radius: 8px;
+  border: 1px solid #c0c5cc;
 `;
 
-const BORDER = '1px solid #efefef';
+const InviteNewCard = styled(MemberContainer)`
+  border: 1px dashed #c0c5cc;
+  cursor: pointer;
+`;
+
+/** A container to center the logo above a horizontal bar */
+const MemberLogoContainer = styled(Box)`
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  border-top: 1px solid #e6e8eb;
+`;
 
 const EMPTY_MEMBERS = [{}];
 
@@ -68,6 +84,8 @@ class Members extends React.Component {
       isTouched: false,
       isSubmitting: false,
       isSubmitted: false,
+      showInviteModal: false,
+      showEditModal: false,
     };
     this.messages = defineMessages({
       roleLabel: { id: 'members.role.label', defaultMessage: 'role' },
@@ -136,6 +154,16 @@ class Members extends React.Component {
     const members = get(props.data, 'Collective.members', EMPTY_MEMBERS);
     const all = [...members, ...pendingInvitationsMembersData];
     return all.length === 0 ? EMPTY_MEMBERS : all;
+  }
+
+  handleShowModalChange(modal, value, memberIdx) {
+    if (modal === 'edit') {
+      const currentMember = this.state.members[memberIdx];
+      this.setState({ showEditModal: value, currentMember });
+    }
+    if (modal === 'invite') {
+      this.setState({ showInviteModal: value });
+    }
   }
 
   getMembersCollectiveIds = memoizeOne(members => {
@@ -214,8 +242,9 @@ class Members extends React.Component {
     return !this.state.members.some(m => !m.member);
   }
 
-  renderMember = (member, index, nbAdmins) => {
-    const { intl } = this.props;
+  renderNewMember = (member, index, nbAdmins) => {
+    const { intl, collective } = this.props;
+
     const membersCollectiveIds = this.getMembersCollectiveIds(this.state.members);
     const isInvitation = member.__typename === 'MemberInvitation';
     const collectiveId = get(member, 'member.id');
@@ -224,76 +253,58 @@ class Members extends React.Component {
     const isLastAdmin = nbAdmins === 1 && member.role === roles.ADMIN && member.id;
 
     return (
-      <Container key={`member-${index}-${memberKey}`} mt={4} pb={4} borderBottom={BORDER} data-cy={`member-${index}`}>
-        <ResetGlobalStyles>
-          <Flex mt={2} flexWrap="wrap">
-            <Box width={[1, 2 / 12]} />
-            <Flex flex="1" justifyContent="space-between" alignItems="center" flexWrap="wrap" mb={2}>
-              <Box ml={1} my={1}>
-                <CollectivePickerAsync
-                  inputId={`member-collective-picker-${index}`}
-                  creatable
-                  width="100%"
-                  minWidth={325}
-                  maxWidth={450}
-                  onChange={option => this.editMember(index, 'member', option.value)}
-                  getOptions={memberCollective && (buildOption => buildOption(memberCollective))}
-                  isDisabled={Boolean(memberCollective)}
-                  types={[CollectiveType.USER]}
-                  filterResults={collectives => collectives.filter(c => !membersCollectiveIds.includes(c.id))}
-                  data-cy="member-collective-picker"
-                />
-              </Box>
-              {isInvitation && (
-                <Flex alignItems="center" my={1} data-cy="member-pending-tag">
-                  <StyledTooltip content={intl.formatMessage(this.messages.memberPendingDetails)}>
-                    <StyledTag textTransform="uppercase" display="block" type="info">
-                      <FormattedMessage id="Pending" defaultMessage="Pending" />
-                    </StyledTag>
-                  </StyledTooltip>
-                </Flex>
-              )}
-              {isLastAdmin ? (
-                <StyledTooltip content={() => intl.formatMessage(this.messages.cantRemoveLast)}>
-                  <StyledButton my={1} disabled>
-                    {intl.formatMessage(this.messages.removeMember)}
-                  </StyledButton>
-                </StyledTooltip>
-              ) : (
-                <StyledButton my={1} onClick={() => this.removeMember(index)}>
-                  {intl.formatMessage(this.messages.removeMember)}
-                </StyledButton>
-              )}
-            </Flex>
-          </Flex>
-        </ResetGlobalStyles>
-        <form>
-          {this.fields.map(field => (
-            <React.Fragment key={field.name}>
-              <InputField
-                className="horizontal"
-                name={field.name}
-                label={field.label}
-                type={field.type}
-                disabled={field.name === 'role' ? isLastAdmin : false}
-                defaultValue={get(member, field.name) || field.defaultValue}
-                options={field.options}
-                pre={field.pre}
-                placeholder={field.placeholder}
-                onChange={value => this.editMember(index, field.name, value)}
-              />
-              {field.name === 'role' && hasRoleDescription(member.role) && (
-                <Flex mb={3}>
-                  <Box flex="0 1" flexBasis={['0%', '17.5%']} />
-                  <Container flex="1 1" fontSize="12px" color="black.600" fontStyle="italic">
-                    <MemberRoleDescription role={member.role} />
-                  </Container>
-                </Flex>
-              )}
-            </React.Fragment>
-          ))}
-        </form>
-      </Container>
+      <MemberContainer mt={2} key={`member-new-${index}-${memberKey}`} data-cy={`member-${index}`}>
+        <Container position="absolute" top="1rem" right="1rem">
+          {this.state.showEditModal ? (
+            <EditMemberModal
+              key={`member-new-a-${index}-${memberKey}`}
+              show={this.state.showEditModal}
+              intl={intl}
+              member={this.state.currentMember}
+              collective={collective}
+              membersIds={membersCollectiveIds}
+              index={index}
+              cancelHandler={() => this.handleShowModalChange('edit', false, index)}
+              continueHandler={this.onClick}
+            />
+          ) : (
+            <StyledRoundButton onClick={() => this.handleShowModalChange('edit', true, index)} size={26}>
+              <Edit height={16} />
+            </StyledRoundButton>
+          )}
+        </Container>
+        <Flex flexDirection="column" alignItems="center">
+          <MemberLogoContainer mt={50}>
+            <Avatar mt={-28} src={get(memberCollective, 'imageUrl')} radius={56} />
+          </MemberLogoContainer>
+          <P fontSize="14px" lineHeight="20px" mt={2} mb={2}>
+            {get(memberCollective, 'name')}
+          </P>
+          <StyledTag textTransform="uppercase" display="block" mb={2}>
+            {formatMemberRole(intl, get(member, 'role'))}
+          </StyledTag>
+          <P fontSize="10px" lineHeight="14px" fontWeight={400} color="#9D9FA3" mb={2}>
+            Since: <FormattedDate value={get(member, 'since')} />
+          </P>
+          <P fontSize="11px" lineHeight="16px" fontWeight={400} mb={isInvitation ? 2 : 4}>
+            {get(member, 'description')}
+          </P>
+          {isInvitation && (
+            <StyledTooltip content={intl.formatMessage(this.messages.memberPendingDetails)}>
+              <StyledTag
+                mt={3}
+                mb={3}
+                data-cy="member-pending-tag"
+                textTransform="uppercase"
+                display="block"
+                type="info"
+              >
+                <FormattedMessage id="Pending" defaultMessage="Pending" />
+              </StyledTag>
+            </StyledTooltip>
+          )}
+        </Flex>
+      </MemberContainer>
     );
   };
 
@@ -319,13 +330,53 @@ class Members extends React.Component {
             >
               <FormattedMessage id="EditMembers.Title" defaultMessage="Edit Team" />
             </SettingsTitle>
-            {members.map((m, idx) => this.renderMember(m, idx, nbAdmins))}
+            <Grid gridGap={20} gridTemplateColumns={['1fr', '1fr 1fr', '1fr 1fr 1fr', '1fr 1fr 1fr 1fr']}>
+              {this.state.showInviteModal ? (
+                // <ConfirmationModal
+                //   show={this.state.showInviteModal}
+                //   header={<FormattedMessage id="editTeam.member.invite" defaultMessage="Invite Team Member" />}
+                //   onClose={() => this.handleShowModalChange('invite', false)}
+                //   cancelLabel={<FormattedMessage id="no" defaultMessage="No" />}
+                //   cancelHandler={() => this.handleShowModalChange('invite', false)}
+                //   continueLabel={<FormattedMessage id="yes" defaultMessage="Yes" />}
+                //   continueHandler={this.onClick}
+                // />
+                <InviteMemberModal
+                  show={this.state.showInviteModal}
+                  intl={intl}
+                  //member={this.state.currentMember}
+                  //membersIds={membersCollectiveIds}
+                  //index={index}
+                  cancelHandler={() => this.handleShowModalChange('invite', false)}
+                  continueHandler={this.onClick}
+                />
+              ) : (
+                <InviteNewCard mt={2}>
+                  <Flex
+                    alignItems="center"
+                    justifyContent="center"
+                    height="100%"
+                    onClick={() => this.handleShowModalChange('invite', true)}
+                  >
+                    <Flex flexDirection="column" justifyContent="center" alignItems="center" height="100%">
+                      <StyledRoundButton buttonStyle="dark" fontSize={25}>
+                        +
+                      </StyledRoundButton>
+                      <P mt={3} color="black.700">
+                        <FormattedMessage id="editTeam.member.invite" defaultMessage="Invite Team Member" />
+                      </P>
+                    </Flex>
+                  </Flex>
+                </InviteNewCard>
+              )}
+              {members.map((m, idx) => this.renderNewMember(m, idx, nbAdmins))}
+            </Grid>
           </div>
-          <Container textAlign="center" py={4} mb={4} borderBottom={BORDER}>
+          {/* <Container textAlign="center" py={4} mb={4} borderBottom={BORDER}>
             <StyledButton onClick={() => this.addMember()} data-cy="add-member-btn">
               + {intl.formatMessage(this.messages.addMember)}
             </StyledButton>
-          </Container>
+          </Container> */}
           {error && (
             <MessageBox type="error" withIcon my={3}>
               {error.message}
